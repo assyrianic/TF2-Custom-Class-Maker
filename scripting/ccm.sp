@@ -1,39 +1,29 @@
+#include <sourcemod>
+#include <sdktools>
+#include <tf2_stocks>
+#include <tf2items>
 #include <ccm>
 
 #pragma semicolon 1
-#pragma newdecls optional
+#pragma newdecls required
 
-#define PLUGIN_VERSION		"1.0 BETA"
+#include "ccm/defs_globals.inc"
+#include "ccm/events.sp"
+#include "ccm/subplugin_configuration_file.sp"
 
-//bools
-bool bIsCustomClass[PLYR];
-bool bSetCustomClass[PLYR];
-bool bHasLoadout[MAXCLASSES]; //set if custom class has a customizable loadout
-
-//ints
-Handle hClassIndex[PLYR];
-int iClassIndex[PLYR];
-
-public Plugin myinfo = 
-{
+public Plugin myinfo = {
 	name 			= "Custom Class Maker",
 	author 			= "Nergal/Assyrian, props to RSWallen, Friagram, Chdata, Powerlord, and everyone else on AM",
 	description 		= "Make your Own Classes!",
 	version 		= PLUGIN_VERSION,
 	url 			= "hue" //will fill later
-}
-
-//cvar handles
-Handle bEnabled = INVALID_HANDLE;
-Handle AllowBlu = INVALID_HANDLE;
-Handle AllowRed = INVALID_HANDLE;
-Handle AdminFlagByPass = INVALID_HANDLE;
-
-Handle OnAddToDownloads;
+};
 
 public void OnPluginStart()
 {
-	SetHandles();
+	hArrayClass = new ArrayList();
+	hTrieClass = new StringMap();
+
 	RegConsoleCmd("sm_ccm", MakeClassMenu);
 	RegConsoleCmd("sm_noccm", MakeNotClass); //need more creative commands
 	RegConsoleCmd("sm_offccm", MakeNotClass);
@@ -46,9 +36,35 @@ public void OnPluginStart()
 
 	AllowRed = CreateConVar("sm_ccm_red", "1", "(Dis)Allow Custom Classes to be playable for RED team", FCVAR_PLUGIN|FCVAR_NOTIFY, true, 0.0, true, 1.0);
 
-	AdminFlagByPass = CreateConVar("sm_ccm_flagbypass", "a", "what flag admins need to bypass the tank class limit", FCVAR_PLUGIN);
+	AdminFlagByPass = CreateConVar("sm_ccm_flagbypass", "a", "what flag admins need to bypass the custom class limit", FCVAR_PLUGIN);
 
-	AutoExecConfig(true, "CustomClassMaker");
+	p_OnClassResupply = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnClassSpawn = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnClassMenuSelected = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnClassDeSelected = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnInitClass = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnClassEquip = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell) );
+	p_OnClassAirblasted = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassDoAirblast = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKillBuilding = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKill = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKillDomination = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKillRevenge = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKilled = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKilledDomination = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassKilledRevenge = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassUbered = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+	p_OnClassDeployUber = new PrivForws( CreateForward(ET_Ignore, Param_Cell, Param_Cell, Param_Cell) );
+
+	p_OnConfiguration_Load_Sounds = new PrivForws( CreateForward(ET_Ignore, Param_String, Param_String, Param_String, Param_CellByRef, Param_CellByRef) );
+
+	p_OnConfiguration_Load_Materials = new PrivForws( CreateForward(ET_Ignore, Param_String, Param_String, Param_String, Param_CellByRef, Param_CellByRef) );
+
+	p_OnConfiguration_Load_Models = new PrivForws( CreateForward(ET_Ignore, Param_String, Param_String, Param_String, Param_CellByRef, Param_CellByRef) );
+
+	p_OnConfiguration_Load_Misc =  new PrivForws( CreateForward(ET_Ignore, Param_String, Param_String, Param_String) );
+
+	//AutoExecConfig(true, "CustomClassMaker");
 	HookEvent("player_death", PlayerDeath, EventHookMode_Pre);
 	HookEvent("player_spawn", PlayerSpawn);
 	HookEvent("player_hurt", PlayerHurt, EventHookMode_Pre);
@@ -57,7 +73,6 @@ public void OnPluginStart()
 	HookEvent("post_inventory_application", Resupply);
 	HookEvent("object_deflected", Deflected, EventHookMode_Pre);
 	HookEvent("object_destroyed", Destroyed, EventHookMode_Pre);
-
 	HookEvent("teamplay_round_start", RoundStart);
 
 	for (int i = 1; i <= MaxClients; i++)
@@ -68,389 +83,87 @@ public void OnPluginStart()
 }
 public void OnClientPutInServer(int client)
 {
-	bIsCustomClass[client] = false;
-	bSetCustomClass[client] = false;
-	hClassIndex[client] = INVALID_HANDLE;
-	iClassIndex[client] = -1;
+	CustomClass player = CustomClass(client);
+	player.reset();
 }
 public void OnClientDisconnect(int client)
 {
-	bIsCustomClass[client] = false;
-	bSetCustomClass[client] = false;
-	hClassIndex[client] = INVALID_HANDLE;
-	iClassIndex[client] = -1;
+	CustomClass player = CustomClass(client);
+	if (player.bIsCustom) CCM_OnClassDeSelected(player.userid);
+	player.reset();
 }
-public Action TF2_OnPlayerTeleport(int client, int teleporter, bool &result)
-{
-	if (bIsCustomClass[client])
-	{
-		Function FuncClassTele = GetFunctionByName(hClassIndex[client], "CCM_OnClassTeleport");
-		if (FuncClassTele != INVALID_FUNCTION)
-		{
-			int endresult;
-			Call_StartFunction(hClassIndex[client], FuncClassTele);
-			Call_PushCell(client);
-			Call_PushCell(teleporter);
-			Call_PushCellRef(result);
-			Call_Finish(endresult);
-			return Action:endresult;
-		}
-		else return Action:0;
-	}
-	return Action:0;
-}
-public void OnMapStart()
-{
-	Call_StartForward(OnAddToDownloads);
-	Call_Finish();
-}
-public Action Resupply(Handle hEvent, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
-	if (client && IsClientInGame(client))
-	{
-		if (bIsCustomClass[client])
-		{
-			Function FuncClassResupply = GetFunctionByName(hClassIndex[client], "CCM_OnClassResupply");
-			if (FuncClassResupply != INVALID_FUNCTION)
-			{
-				Call_StartFunction(hClassIndex[client], FuncClassResupply);
-				Call_PushCell(client);
-				Call_Finish();
-			}
-			CreateTimer(0.1, TimerEquipClass, GetClientUserId(client));
-		}
-	}
-	return Action:0;
-}
-public Action PlayerSpawn(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int client = GetClientOfUserId(GetEventInt(event, "userid"));
-	if ( client && IsClientInGame(client) )
-	{
-		SetVariantString("");
-		AcceptEntityInput(client, "SetCustomModel");
-		if ( (!GetConVarBool(AllowBlu) && (GetClientTeam(client) == 3)) || (!GetConVarBool(AllowRed) && (GetClientTeam(client) == 2)) )
-		{
-			bSetCustomClass[client] = false; //block the blocked teams from being able to become custom classes
-		}
-		bIsCustomClass[client] = (bSetCustomClass[client] ? true : false); //get class set
-		if (bIsCustomClass[client]) MakeClass(GetClientUserId(client));
-	}
-	return Action:0;
-}
-public Action MakeClass(int userid) //set class attributes here like Think timers.
-{
-	int client = GetClientOfUserId(userid);
-	if ( client && IsClientInGame(client) )
-	{
-		CreateTimer(0.2, MakeModelTimer, userid);
-		//CreateTimer(0.0, TimerClassThink, userid, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
-		CreateTimer(0.1, TimerEquipClass, userid);
-		CreateTimer(10.0, MakeModelTimer, userid, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 
-		Function FuncInitTimer = GetFunctionByName(hClassIndex[client], "CCM_OnMakeClass");
-		if (FuncInitTimer != INVALID_FUNCTION)
-		{
-			int result;
-			Call_StartFunction(hClassIndex[client], FuncInitTimer);
-			Call_PushCell(client);
-			Call_Finish(result);
-			return Action:result;
-		}
-	}
-	return Action:0;
-}
-public Action TimerEquipClass(Handle timer, any userid)
-{
-	int client = GetClientOfUserId(userid);
-	if (client && IsClientInGame(client) && IsPlayerAlive(client))
-	{
-		if (!bIsCustomClass[client]) return Action:0;
-		TF2_RemoveAllWeapons2(client);
-
-		Function FuncEquip = GetFunctionByName(hClassIndex[client], "CCM_OnClassEquip");
-		if (FuncEquip != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[client], FuncEquip);
-			Call_PushCell(client);
-			Call_Finish();
-		}
-	}
-	return Action:0;
-}
-public Action Deflected(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled) || GetEventInt(event, "weaponid")) return Action:0;
-	int airblaster = GetClientOfUserId(GetEventInt(event, "userid"));
-	int client = GetClientOfUserId(GetEventInt(event, "ownerid"));
-	if ( bIsCustomClass[client] )
-	{
-		Function FuncAirblasted = GetFunctionByName(hClassIndex[client], "CCM_OnClassAirblasted");
-		if (FuncAirblasted != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[client], FuncAirblasted);
-			Call_PushCell(client);
-			Call_PushCell(airblaster);
-			Call_Finish();
-		}
-	}
-	else if ( bIsCustomClass[airblaster] ) 
-	{
-		Function FuncAirblastee = GetFunctionByName(hClassIndex[airblaster], "CCM_OnClassDoAirblast");
-		if (FuncAirblastee != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[airblaster], FuncAirblastee);
-			Call_PushCell(airblaster);
-			Call_PushCell(client);
-			Call_Finish();
-		}
-	}
-	return Action:0;
-}
-public Action Destroyed(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
-	int building = GetEventInt(event, "index");
-	if ( bIsCustomClass[attacker] )
-	{
-		Function FuncKillToys = GetFunctionByName(hClassIndex[attacker], "CCM_OnClassKillBuilding");
-		if (FuncKillToys != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[attacker], FuncKillToys);
-			Call_PushCell(attacker);
-			Call_PushCell(building);
-			Call_Finish();
-		}
-	}
-	return Action:0;
-}
-public Action ChangeClass(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int client = GetClientOfUserId(GetEventInt(event, "userid"));
-	if (client && IsClientInGame(client))
-	{
-		if ( (!GetConVarBool(AllowBlu) && GetClientTeam(client) == 3) || (!GetConVarBool(AllowRed) && GetClientTeam(client) == 2) )
-			return Action:0;
-
-		if (bIsCustomClass[client])
-		{
-			Function FuncChangeClass = GetFunctionByName(hClassIndex[client], "CCM_OnClassChangeClass");
-			if (FuncChangeClass != INVALID_FUNCTION)
-			{
-				Call_StartFunction(hClassIndex[client], FuncChangeClass);
-				Call_PushCell(client);
-				Call_Finish();
-			}
-		}
-		else
-		{
-			if (bSetCustomClass[client]) bIsCustomClass[client] = true;
-		}
-	}
-	return Action:0;
-}
-public Action PlayerDeath(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int client = GetClientOfUserId(GetEventInt(event, "userid"));
-	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
-	int deathflags = GetEventInt(event, "death_flags");
-
-	if (bIsCustomClass[attacker])
-	{
-		Function FuncClassKill = GetFunctionByName(hClassIndex[attacker], "CCM_OnClassKill");
-		if (FuncClassKill != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[attacker], FuncClassKill);
-			Call_PushCell(attacker);
-			Call_PushCell(client);
-			Call_Finish();
-		}
-		if (deathflags & (TF_DEATHFLAG_KILLERDOMINATION|TF_DEATHFLAG_ASSISTERDOMINATION))
-		{
-			Function FuncClassKillDom = GetFunctionByName(hClassIndex[attacker], "CCM_OnClassKillDomination");
-			if (FuncClassKillDom != INVALID_FUNCTION)
-			{
-				Call_StartFunction(hClassIndex[attacker], FuncClassKillDom);
-				Call_PushCell(attacker);
-				Call_PushCell(client);
-				Call_Finish();
-			}
-		}
-		else if ((deathflags & (TF_DEATHFLAG_KILLERREVENGE|TF_DEATHFLAG_ASSISTERREVENGE)))
-		{
-			Function FuncClassKillRev = GetFunctionByName(hClassIndex[attacker], "CCM_OnClassKillRevenge");
-			if (FuncClassKillRev != INVALID_FUNCTION)
-			{
-				Call_StartFunction(hClassIndex[attacker], FuncClassKillRev);
-				Call_PushCell(attacker);
-				Call_PushCell(client);
-				Call_Finish();
-			}
-		}
-	}
-	else if (bIsCustomClass[client])
-	{
-		Function FuncClassKilled = GetFunctionByName(hClassIndex[client], "CCM_OnClassKilled");
-		if (FuncClassKilled != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[client], FuncClassKilled);
-			Call_PushCell(client);
-			Call_PushCell(attacker);
-			Call_Finish();
-		}
-	}
-	return Action:0;
-}
-public Action PlayerHurt(Handle event, const char[] name, bool dontBroadcast) //does this even need to be used?
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	//int client = GetClientOfUserId(GetEventInt(event, "userid"));
-	//int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
-	//int damage = GetEventInt(event, "damageamount");
-	return Action:0;
-}
-public Action ChargeDeployed(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	int medic = GetClientOfUserId(GetEventInt(event, "userid"));
-	int ubered = GetClientOfUserId(GetEventInt(event, "targetid"));
-	if (bIsCustomClass[ubered])
-	{
-		Function FuncClassUbered = GetFunctionByName(hClassIndex[ubered], "CCM_OnClassUbered");
-		if (FuncClassUbered != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[ubered], FuncClassUbered);
-			Call_PushCell(ubered);
-			Call_PushCell(medic);
-			Call_Finish();
-		}
-	}
-	else if (bIsCustomClass[medic])
-	{
-		Function FuncClassDidUber = GetFunctionByName(hClassIndex[medic], "CCM_OnClassDeployUber");
-		if (FuncClassDidUber != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[medic], FuncClassDidUber);
-			Call_PushCell(medic);
-			Call_PushCell(ubered);
-			Call_Finish();
-		}
-	}
-	return Action:0;
-}
-public Action RoundStart(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!GetConVarBool(bEnabled)) return Action:0;
-	for (int client = 1; client <= MaxClients; client++)
-	{
-		if ( IsValidClient(client, false) && bIsCustomClass[client] )
-		{
-			CreateTimer(10.0, TimerEquipClass, GetClientUserId(client));
-		}
-	}
-	return Action:0;
-}
-public Action MakeModelTimer(Handle hTimer, any userid)
-{
-	int client = GetClientOfUserId(userid);
-	if (client <= 0) return Action:4;
-	if (client && IsClientInGame(client) && IsPlayerAlive(client))
-	{
-		if (bIsCustomClass[client])
-		{
-			Function FuncModelTimer = GetFunctionByName(hClassIndex[client], "CCM_OnModelTimer");
-			if (FuncModelTimer != INVALID_FUNCTION)
-			{
-				int result;
-				Call_StartFunction(hClassIndex[client], FuncModelTimer);
-				Call_PushCell(client);
-				char model[64];
-				Call_PushStringEx(model, sizeof(model), 0, SM_PARAM_COPYBACK);
-				Call_Finish(result);
-
-				SetVariantString(model);
-				AcceptEntityInput(client, "SetCustomModel");
-				SetEntProp(client, Prop_Send, "m_bUseClassAnimations", 1);
-				return Action:result;
-			}
-			else LogError("**** CCM Error: Cannot find 'CCM_OnModelTimer' Function ****");
-			//SetEntPropFloat(client, Prop_Send, "m_flModelScale", 1.25);
-		}
-		else
-		{
-			SetVariantString("");
-			AcceptEntityInput(client, "SetCustomModel");
-			return Action:4;
-		}
-	}
-	return Action:0;
-}
 public Action MakeClassMenu(int client, int args)
 {
-	if (GetConVarBool(bEnabled) && IsClientInGame(client))
+	if ( bEnabled.BoolValue && IsClientInGame(client))
 	{
-		char classnameholder[32];
-		Menu classpick = Menu(MenuHandler_PickClass);
+		Menu classpick = new Menu(MenuHandler_PickClass);
 		//Handle MainMenu = CreateMenu(MenuHandler_Perks);
-		classpick.SetTitle("[Custom Class Maker] Choose A Custom Class");
-		int count = GetArraySize(hArrayClass);
+		classpick.SetTitle("[Custom Class Maker] Choose A Custom Class!");
+		int count = hArrayClass.Length; //GetArraySize(hArrayClass);
+
+		if (count <= 0) {
+			ReplyToCommand(client, "[CCM] No Class Modules Loaded!");
+			return Plugin_Continue;
+		}
+
+		char longnameholder[32];
 		for (int i = 0; i < count; i++)
 		{
-			GetTrieString(GetArrayCell(hArrayClass, i), "ClassName", classnameholder, sizeof(classnameholder));
-			classpick.AddItem("pickclass", classnameholder);
+			GetTrieString(hArrayClass.Get(i), "LongName", longnameholder, sizeof(longnameholder));
+			classpick.AddItem("pickclass", longnameholder);
 		}
 		classpick.Display(client, MENU_TIME_FOREVER);
 	}
-	return Action:0;
+	return Plugin_Handled;
 }
 public int MenuHandler_PickClass(Menu menu, MenuAction action, int client, int selection)
-{  
-	char blahblah[32];
-	menu.GetItem(selection, blahblah, sizeof(blahblah));
-	if (action == MenuAction_Select)
-        {
-		hClassIndex[client] = GetClassSubPlugin(GetArrayCell(hArrayClass, selection));
-		char classnameholder[32];
-		GetTrieString(GetArrayCell(hArrayClass, selection), "ClassName", classnameholder, sizeof(classnameholder));
-		ReplyToCommand(client, "[CCM] You selected %s as your class!", classnameholder);
-		iClassIndex[client] = selection;
-
-		Function FuncPickClass = GetFunctionByName(hClassIndex[client], "CCM_OnClassSelected");
-		if (FuncPickClass != INVALID_FUNCTION)
-		{
-			Call_StartFunction(hClassIndex[client], FuncPickClass);
-			Call_PushCell(client);
-			Call_Finish();
-		}
-		bSetCustomClass[client] = true;
-        }
-	else if (action == MenuAction_End) delete menu;	
-}
-public Action MakeNotClass(int client, int args)
 {
-	if (GetConVarBool(bEnabled))
+	char blahblah[32]; menu.GetItem(selection, blahblah, sizeof(blahblah));
+	if (action == MenuAction_Select)
 	{
-		bSetCustomClass[client] = false;
-		char classnameholder[32];
-		Handle holderhndl = GetArrayCell(hArrayClass, iClassIndex[client]);
-		GetTrieString(holderhndl, "ClassName", classnameholder, sizeof(classnameholder));
-		ReplyToCommand(client, "You will no longer be the %s class next time you respawn", classnameholder);
-
-		Function FuncOffClass = GetFunctionByName(hClassIndex[client], "CCM_OnClassDeselected");
-		if (FuncOffClass != INVALID_FUNCTION)
+		CustomClass player = CustomClass(client);
+		if (player.bSetCustom && player.iIndex == selection)
 		{
-			Call_StartFunction(hClassIndex[client], FuncOffClass); //get the func off :)
-			Call_PushCell(client);
-			Call_Finish();
+			ReplyToCommand(client, "[CCM] You've already chosen that class!");
+		}
+		else
+		{
+			StringMap mappy = hArrayClass.Get(selection);
+			player.hIndex = GetClassSubPlugin( mappy );
+			char classnameholder[32];
+			mappy.GetString("LongName", classnameholder, sizeof(classnameholder));
+			ReplyToCommand(client, "[CCM] You selected %s as your class!", classnameholder);
+			player.iIndex = selection;
+
+			//CCM_OnClassMenuSelected
+			player.bSetCustom = true;
+			CCM_OnClassMenuSelected(player.userid); 
 		}
 	}
-	return Action:0;
+	else if (action == MenuAction_End) delete menu;
+}
+
+public Action MakeNotClass(int client, int args)
+{
+	if ( bEnabled.BoolValue )
+	{
+		CustomClass player = CustomClass(client);
+		if ( !player.bIsCustom )
+		{
+			ReplyToCommand(player.index, "[CCM] You're already not a custom class!");
+			return Plugin_Handled;
+		}
+		player.bSetCustom = false;
+		char classnameholder[32];
+		StringMap holder = hArrayClass.Get(player.iIndex);
+		holder.GetString("LongName", classnameholder, sizeof(classnameholder));
+		ReplyToCommand(client, "[CCM] You will no longer be the %s class next time you respawn", classnameholder);
+
+		//CCM_OnClassDeselected
+		CCM_OnClassDeSelected(player.userid);
+	}
+	return Plugin_Handled;
 }
 /*public void ClassInitialize(int userid, int ClassID)
 {
@@ -530,29 +243,388 @@ public Action CmdReloadCFG(int client, int iAction)
 {
 	ServerCommand("sm_rcon exec sourcemod/CustomClassMaker.cfg");
 	ReplyToCommand(client, "**** Reloading CustomClassMaker Config ****");
-	return Action:3;
+	return Plugin_Handled;
 }
+
+stock Handle FindClassName(const char[] name)
+{
+	Handle GotClassName;
+	if (GetTrieValueCaseInsensitive(hTrieClass, name, GotClassName)) return GotClassName;
+	return null;
+}
+public int RegisterClass(Handle pluginhndl, const char shortname[16], const char longname[32])
+{
+	if (!ValidateName(shortname))
+	{
+		LogError("**** RegisterClass - Invalid Name For Class ****");
+		return -1;
+	}
+	else if (FindClassName(shortname) != null)
+	{
+		LogError("**** RegisterClass - Class Already Exists ****");
+		return -1;
+	}
+	// Create the trie to hold the data about the class
+	StringMap ClassMap = new StringMap();
+	ClassMap.SetValue("Subplugin", pluginhndl);
+	ClassMap.SetString("ShortName", shortname);
+	ClassMap.SetString("LongName", longname);
+
+	// Then push it to the global array and trie
+	// Don't forget to convert the string to lower cases!
+	hArrayClass.Push(ClassMap); //PushArrayCell(hArrayClass, ClassSubplug);
+	SetTrieValueCaseInsensitive(hTrieClass, shortname, ClassMap);
+
+	return hArrayClass.Length-1;
+}
+
+// Real Private Forwards
+
+stock PrivForws GetCCMHookType(CCMHookType hook)
+{
+	switch ( hook )
+	{
+		case CCMHook_OnClassResupply:			return p_OnClassResupply;
+		case CCMHook_OnClassSpawn:			return p_OnClassSpawn;
+		case CCMHook_OnClassMenuSelected:		return p_OnClassMenuSelected;
+		case CCMHook_OnClassDeSelected:			return p_OnClassDeSelected;
+		case CCMHook_OnInitClass:			return p_OnInitClass;
+		case CCMHook_OnClassEquip:			return p_OnClassEquip;
+		case CCMHook_OnClassAirblasted:			return p_OnClassAirblasted;
+		case CCMHook_OnClassDoAirblast:			return p_OnClassDoAirblast;
+		case CCMHook_OnClassKillBuilding:		return p_OnClassKillBuilding;
+		case CCMHook_OnClassKill:			return p_OnClassKill;
+		case CCMHook_OnClassKillDomination:		return p_OnClassKillDomination;
+		case CCMHook_OnClassKillRevenge:		return p_OnClassKillRevenge;
+		case CCMHook_OnClassKilled:			return p_OnClassKilled;
+		case CCMHook_OnClassKilledDomination:		return p_OnClassKilledDomination;
+		case CCMHook_OnClassKilledRevenge:		return p_OnClassKilledRevenge;
+		case CCMHook_OnClassUbered:			return p_OnClassUbered;
+		case CCMHook_OnClassDeployUber:			return p_OnClassDeployUber;
+		case CCMHook_OnConfiguration_Load_Sounds:	return p_OnConfiguration_Load_Sounds;
+		case CCMHook_OnConfiguration_Load_Materials:	return p_OnConfiguration_Load_Materials;
+		case CCMHook_OnConfiguration_Load_Models:	return p_OnConfiguration_Load_Models;
+		case CCMHook_OnConfiguration_Load_Misc:		return p_OnConfiguration_Load_Misc;
+	}
+	return null;
+}
+
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
-	// F O R W A R D S ==============================================================================================
-	OnAddToDownloads = CreateGlobalForward("CCM_OnAddToDownloads", ET_Ignore);
-	//===========================================================================================================================
-
 	// N A T I V E S ============================================================================================================
 	CreateNative("CCM_RegisterClass", Native_RegisterClassSubplugin);
+	CreateNative("CCM_LoadConfig", Native_LoadConfigurationSubplugin);
+	CreateNative("CCM_Hook", Native_Hook);
+	CreateNative("CCM_HookEx", Native_HookEx);
+	CreateNative("CCM_Unhook", Native_Unhook);
+	CreateNative("CCM_UnhookEx", Native_UnhookEx);
+
+	CreateNative("CCM_IsCustomClass", Native_IsCustomClass);
+	CreateNative("CCM_SetIsCustomClass", Native_SetIsCustomClass);
+	CreateNative("CCM_IsSetCustomClass", Native_IsSetCustomClass);
+	CreateNative("CCM_SetIsSetCustomClass", Native_SetIsSetCustomClass);
+	CreateNative("CCM_GetPlayerModuleIndex", Native_GetPlayerModuleIndex);
+	CreateNative("CCM_SetPlayerModuleIndex", Native_SetPlayerModuleIndex);
 	//===========================================================================================================================
 
 	RegPluginLibrary("ccm");
-#if defined _steamtools_included
-	MarkNativeAsOptional("Steam_SetGameDescription");
-#endif
+	MarkNativeAsOptional("CCM_RegisterClass");
+	MarkNativeAsOptional("CCM_LoadConfig");
+	MarkNativeAsOptional("CCM_Hook");
+	MarkNativeAsOptional("CCM_HookEx");
+	MarkNativeAsOptional("CCM_Unhook");
+	MarkNativeAsOptional("CCM_UnhookEx");
+
+	MarkNativeAsOptional("CCM_IsCustomClass");
+	MarkNativeAsOptional("CCM_SetIsCustomClass");
+	MarkNativeAsOptional("CCM_IsSetCustomClass");
+	MarkNativeAsOptional("CCM_SetIsSetCustomClass");
+	MarkNativeAsOptional("CCM_GetPlayerModuleIndex");
+	MarkNativeAsOptional("CCM_SetPlayerModuleIndex");
+
 	return APLRes_Success;
 }
+
 public int Native_RegisterClassSubplugin(Handle plugin, int numParams)
 {
-	char ClassSubPluginName[32];
-	GetNativeString(1, ClassSubPluginName, sizeof(ClassSubPluginName));
-	CCMError erroar;
-	Handle ClassHandle = RegisterClass(plugin, ClassSubPluginName, erroar); //ALL PROPS TO COOKIES.NET AKA COOKIES.IO
-	return _:ClassHandle;
+	char ShortModuleName[16]; GetNativeString(1, ShortModuleName, sizeof(ShortModuleName));
+	char ModuleName[32]; GetNativeString(2, ModuleName, sizeof(ModuleName));
+
+	int ClassIndex = RegisterClass(plugin, ShortModuleName, ModuleName); //ALL PROPS TO COOKIES.NET AKA COOKIES.IO
+	return ClassIndex;
+}
+public int Native_LoadConfigurationSubplugin(Handle plugin, int numParams)
+{
+	char cFileName[128]; GetNativeString(1, cFileName, sizeof(cFileName));
+	return CCM_Load_Configuration(plugin, cFileName);
+}
+public int Native_Hook(Handle plugin, int numParams)
+{
+	CCMHookType CCMHook = GetNativeCell(1);
+
+	PrivForws FwdHandle = GetCCMHookType(CCMHook);
+	Function Func = GetNativeFunction(2);
+
+	if (FwdHandle != null)
+	{
+		FwdHandle.Add(plugin, Func);
+	}
+}
+
+public int Native_HookEx(Handle plugin, int numParams)
+{
+	CCMHookType CCMHook = GetNativeCell(1);
+
+	PrivForws FwdHandle = GetCCMHookType(CCMHook);
+	Function Func = GetNativeFunction(2);
+
+	if (FwdHandle != null)
+	{
+		return FwdHandle.Add(plugin, Func);
+	}
+	return 0;
+}
+
+public int Native_Unhook(Handle plugin, int numParams)
+{
+	CCMHookType CCMHook = GetNativeCell(1);
+
+	PrivForws FwdHandle = GetCCMHookType(CCMHook);
+
+	if (FwdHandle != null)
+	{
+		//RemoveAutomaticHooking(plugin);
+		//RemoveFromForward(FwdHandle, plugin, GetNativeFunction(2));
+		FwdHandle.Remove(plugin, GetNativeFunction(2));
+	}
+}
+public int Native_UnhookEx(Handle plugin, int numParams)
+{
+	CCMHookType CCMHook = GetNativeCell(1);
+
+	PrivForws FwdHandle = GetCCMHookType(CCMHook);
+
+	if(FwdHandle != null)
+	{
+		//RemoveAutomaticHooking(plugin);
+		return FwdHandle.Remove(plugin, GetNativeFunction(2));
+	}
+	return 0;
+}
+
+// Internal private forward calls
+
+public void CCM_OnClassResupply(int userid) // 2
+{
+	//Call_StartForward(p_OnClassResupply);
+	p_OnClassResupply.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+
+public void CCM_OnClassSpawn(int userid) // 2
+{
+	p_OnClassSpawn.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+public void CCM_OnClassMenuSelected(int userid) // 2
+{
+	p_OnClassMenuSelected.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+public void CCM_OnClassDeSelected(int userid) // 2
+{
+	p_OnClassDeSelected.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+public void CCM_OnInitClass(int userid) // 2
+{
+	p_OnInitClass.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+public void CCM_OnClassEquip(int userid) // 2
+{
+	p_OnClassEquip.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_Finish();
+}
+public void CCM_OnClassAirblasted(int userid, int attackerid) // 3
+{
+	p_OnClassAirblasted.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassDoAirblast(int userid, int attackerid) // 3
+{
+	p_OnClassDoAirblast.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(attackerid)]);
+	Call_PushCell(userid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKillBuilding(int userid, int entref) // 3
+{
+	p_OnClassKillBuilding.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(userid)]);
+	Call_PushCell(userid);
+	Call_PushCell(entref);
+	Call_Finish();
+}
+public void CCM_OnClassKill(int victimid, int attackerid) // 3
+{
+	p_OnClassKill.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(attackerid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKillDomination(int victimid, int attackerid) // 3
+{
+	p_OnClassKillDomination.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(attackerid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKillRevenge(int victimid, int attackerid) // 3
+{
+	p_OnClassKillRevenge.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(attackerid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKilled(int victimid, int attackerid) // 3
+{
+	p_OnClassKilled.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(victimid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKilledDomination(int victimid, int attackerid) // 3
+{
+	p_OnClassKilledDomination.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(victimid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassKilledRevenge(int victimid, int attackerid) // 3
+{
+	p_OnClassKilledRevenge.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(victimid)]);
+	Call_PushCell(victimid);
+	Call_PushCell(attackerid);
+	Call_Finish();
+}
+public void CCM_OnClassUbered(int patientid, int medicid) // 3
+{
+	p_OnClassUbered.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(patientid)]);
+	Call_PushCell(patientid);
+	Call_PushCell(medicid);
+	Call_Finish();
+}
+public void CCM_OnClassDeployUber(int patientid, int medicid) // 3
+{
+	p_OnClassDeployUber.Start();
+	Call_PushCell(iClassIndex[GetClientOfUserId(medicid)]);
+	Call_PushCell(patientid);
+	Call_PushCell(medicid);
+	Call_Finish();
+}
+public void CCM_OnConfiguration_Load_Sounds(char[] cFile, char[] skey, char[] value, bool &bPreCacheFile, bool &bAddFileToDownloadsTable) // 5
+{
+	p_OnConfiguration_Load_Sounds.Start();
+	Call_PushString(cFile);
+	Call_PushString(skey);
+	Call_PushString(value);
+	Call_PushCellRef(bPreCacheFile);
+	Call_PushCellRef(bAddFileToDownloadsTable);
+	Call_Finish();
+}
+
+public void CCM_OnConfiguration_Load_Materials(char[] cFile, char[] skey, char[] value, bool &bPreCacheFile, bool &bAddFileToDownloadsTable) // 5
+{
+	p_OnConfiguration_Load_Materials.Start();
+	Call_PushString(cFile);
+	Call_PushString(skey);
+	Call_PushString(value);
+	Call_PushCellRef(bPreCacheFile);
+	Call_PushCellRef(bAddFileToDownloadsTable);
+	Call_Finish();
+}
+
+public void CCM_OnConfiguration_Load_Models(char[] cFile, char[] skey, char[] value, bool &bPreCacheFile, bool &bAddFileToDownloadsTable) // 5
+{
+	p_OnConfiguration_Load_Models.Start();
+	Call_PushString(cFile);
+	Call_PushString(skey);
+	Call_PushString(value);
+	Call_PushCellRef(bPreCacheFile);
+	Call_PushCellRef(bAddFileToDownloadsTable);
+	Call_Finish();
+}
+
+public void CCM_OnConfiguration_Load_Misc(char[] cFile, char[] skey, char[] value) // 3
+{
+	p_OnConfiguration_Load_Misc.Start();
+	Call_PushString(cFile);
+	Call_PushString(skey);
+	Call_PushString(value);
+	Call_Finish();
+}
+
+
+
+
+//non-module related natives
+
+public int Native_IsCustomClass(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	return player.bIsCustom;
+}
+public int Native_SetIsCustomClass(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	player.bIsCustom = GetNativeCell(2);
+	return 0;
+}
+
+public int Native_IsSetCustomClass(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	return player.bSetCustom;
+}
+public int Native_SetIsSetCustomClass(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	player.bSetCustom = GetNativeCell(2);
+	return 0;
+}
+
+public int Native_GetPlayerModuleIndex(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	return player.iIndex;
+}
+public int Native_SetPlayerModuleIndex(Handle plugin, int numParams)
+{
+	CustomClass player = CustomClass(GetNativeCell(1));
+	player.iIndex = GetNativeCell(2);
+	return 0;
 }
