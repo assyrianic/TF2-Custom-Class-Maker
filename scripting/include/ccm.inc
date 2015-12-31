@@ -1,86 +1,333 @@
 #if defined _ccm_included
- #endinput
+	#endinput
 #endif
 #define _ccm_included
 
-#define PLYR			MAXPLAYERS+1 //easier to highlight and copypaste over
-#define MAXCLASSES		250 //who's gonna think up over 250 custom classes anyways? Let alone GETTING to 250 lol
+#define MaxEntities			2048
+//#define PLYR				MAXPLAYERS+1 // 65
+/**< Maximum number of players SourceMod supports */
+// This number is much higher than what TF2 supports
 
-#include <sourcemod>
-#include <sdktools>
-#include <tf2_stocks>
-#include <tf2items>
-#include <adt>
+// Setting (PLYR = Max players) to maximum TF2 Supports (32 + 2 relay?)
+#define PLYR				34
 
-#pragma semicolon 1
-#pragma newdecls optional
+#define PATH				64
+#define PATHX				PLATFORM_MAX_PATH
+#define nullfunc			INVALID_FUNCTION
+#define nullvec				NULL_VECTOR
 
-//=================================================== [ V A R I A B L E S ] ========================================================
+#define MAXCLASSES			50 //who's gonna think up over 50 custom classes anyways? Let alone GET to 50?
 
-Handle hArrayClass = INVALID_HANDLE;	// List <Subplugin>
-Handle hTrieClass = INVALID_HANDLE;	// Map <Boss Name, Subplugin Handle>
-
-stock void SetHandles()
-{
-	hArrayClass = CreateArray();
-	hTrieClass = CreateTrie();
-}
-
-enum CCMError
-{
-	Error_None,				// All-Clear :>
-	Error_InvalidName,			// Invalid name for Class
-	Error_AlreadyExists,			// Class Already Exists....
-	Error_SubpluginAlreadyRegistered,	// The plugin registering a Class already has a Class registered
-}
-//=================================================================================================================================
-
-
-
-//=================================================== [ N A T I V E S ] ==========================================================
-
-native int CCM_RegisterClass(char[] NameOfClass); //use this in EVERY class subplugin, ok?
- 
-//=================================================================================================================================
 
 //=================================================== [ F O R W A R D S ] =========================================================
 
-forward Action CCM_OnModelTimer(int client, char ClassModel[64]); /*called every 2 seconds. YOU NEED THIS FORWARD, IF NOT THEN PLUGIN WILL BITCH AT YOU.*/
-forward Action CCM_OnClassTeleport(int client, int teleporter, bool &result); //obviously when player teleports as a custom class
+enum CCMHookType
+{
+	CCMHook_None,
+	CCMHook_OnClassResupply, //this also calls OnClassEquip since we're resupplying
+	CCMHook_OnClassSpawn,
+	CCMHook_OnClassMenuSelected,
+	CCMHook_OnClassDeSelected,
+	CCMHook_OnInitClass,
+	CCMHook_OnClassEquip,
+	CCMHook_OnClassAirblasted,
+	CCMHook_OnClassDoAirblast,
+	CCMHook_OnClassKillBuilding,
+	CCMHook_OnClassKill,
+	CCMHook_OnClassKillDomination,
+	CCMHook_OnClassKillRevenge,
+	CCMHook_OnClassKilled,
+	CCMHook_OnClassKilledDomination,
+	CCMHook_OnClassKilledRevenge,
+	CCMHook_OnClassUbered,
+	CCMHook_OnClassDeployUber,
+	CCMHook_OnConfiguration_Load_Sounds,
+	CCMHook_OnConfiguration_Load_Materials,
+	CCMHook_OnConfiguration_Load_Models,
+	CCMHook_OnConfiguration_Load_Misc
+};
 
-forward Action CCM_OnMakeClass(int client); /*called when a player becomes a custom class*/
+typeset CCMHookCB
+{
+	// CCMHook OnClassResupply
+	// CCMHook OnClassSpawn
+	// CCMHook OnClassMenuSelected
+	// CCMHook OnClassDeSelected
+	// CCMHook OnInitClass
+	// CCMHook OnClassEquip
+	function void (int iModuleIndex, int iUserId);
 
-forward void CCM_AddToDownloads(); //called during OnMapStart()
+	// CCMHook OnClassAirblasted
+	// CCMHook OnClassDoAirblast
+	// CCMHook OnClassKill
+	// CCMHook OnClassKillDomination
+	// CCMHook OnClassKillRevenge
+	// CCMHook OnClassKilled
+	// CCMHook OnClassKilledDomination
+	// CCMHook OnClassKilledRevenge
+	// CCMHook OnClassUbered
+	// CCMHook OnClassDeployUber
+	function void (int iModuleIndex, int iVictimId, int iAttackerId);
 
-forward void CCM_OnClassResupply(int client); /*called when a player resupply as a custom class*/
+	// CCMHook OnClassKillBuilding
+	function void (int iModuleIndex, int iAttackerId, int iBuildingRef);
 
-forward void CCM_OnClassEquip(int client); /*called when a player is equipped as custom class*/
+	// CCMHook OnConfiguration_Load_Sounds
+	// CCMHook OnConfiguration_Load_Materials
+	// CCMHook OnConfiguration_Load_Models
+	function void (char[] cFile, char[] skey, char[] value, bool &bPreCacheFile, bool &bAddFileToDownloadsTable);
 
-forward void CCM_OnClassAirblasted(int client, int airblaster); /*called when a custom class player is airblasted*/
-
-forward void CCM_OnClassDoAirblast(int airblaster, int client); /*called when a custom class player airblasts a player*/
-
-forward void CCM_OnClassKillBuilding(int attacker, int building); /*called when a custom class player destroys buildings*/
-
-forward void CCM_OnClassChangeClass(int client); /*called when a custom class player changes class*/
-
-forward void CCM_OnClassKill(int attacker, int client); /*called when a custom class player kills someone*/
-
-forward void CCM_OnClassKillDomination(int attacker, int client); /*called when a custom class player dominates someone*/
-
-forward void CCM_OnClassKillRevenge(int attacker, int client); /*called when a custom class player gets revenge*/
-
-forward void CCM_OnClassKilled(int client, int attacker); /*called when a custom class player is killed*/
-
-forward void CCM_OnClassUbered(int ubered, int medic); /*called when a custom class player is ubered*/
-
-forward void CCM_OnClassDeployUber(int medic, int ubered); /*called when a custom class player deploys uber*/
-
-forward void CCM_OnClassSelected(int client); /*called when a player selects a custom class*/
-
-forward void CCM_OnClassDeselected(int client); /*called when a player gets off their custom class*/
+	// CCMHook OnConfiguration_Load_Misc
+	function void (char[] cFile, char[] skey, char[] value);
+};
 
 //=================================================================================================================================
+/*
+methodmap TF2Item < Handle
+{
+	//[ C O N S T R U C T O R ]
+
+	public TF2Item(int iFlags)
+	{
+		return view_as<TF2Item>( TF2Items_CreateItem(iFlags) );
+	}
+	/////////////////////////////// 
+
+	//[ P R O P E R T I E S ]
+
+	property int iFlags
+	{
+		public get()			{ return TF2Items_GetFlags(this); }
+		public set( int iVal )		{ TF2Items_SetFlags(this, iVal); }
+	}
+
+	property int iItemIndex
+	{
+		public get()			{ return TF2Items_GetItemIndex(this); }
+		public set( int iVal )		{ TF2Items_SetItemIndex(this, iVal); }
+	}
+
+	property int iQuality
+	{
+		public get()			{ return TF2Items_GetQuality(this); }
+		public set( int iVal )		{ TF2Items_SetQuality(this, iVal); }
+	}
+
+	property int iLevel
+	{
+		public get()			{ return TF2Items_GetLevel(this); }
+		public set( int iVal )		{ TF2Items_SetLevel(this, iVal); }
+	}
+
+	property int iNumAttribs
+	{
+		public get()			{ return TF2Items_GetNumAttributes(this); }
+		public set( int iVal )		{ TF2Items_SetNumAttributes(this, iVal); }
+	}
+	///////////////////////////////
+
+	//[ M E T H O D S ]
+
+	public int GiveNamedItem(int iClient)
+	{
+		return TF2Items_GiveNamedItem(iClient, this);
+	}
+
+	public void SetClassname(char[] strClassName)
+	{
+		TF2Items_SetClassname(this, strClassName);
+	}
+
+	public void GetClassname(char[] strDest, int iDestSize)
+	{
+		TF2Items_GetClassname(this, strDest, iDestSize);
+	}
+
+	public void SetAttribute(int iSlotIndex, int iAttribDefIndex, float flValue)
+	{
+		TF2Items_SetAttribute(this, iSlotIndex, iAttribDefIndex, flValue);
+	}
+
+	public int GetAttribID(int iSlotIndex)
+	{
+		return TF2Items_GetAttributeId(this, iSlotIndex);
+	}
+
+	public float GetAttribValue(int iSlotIndex)
+	{
+		return TF2Items_GetAttributeValue(this, iSlotIndex);
+	}
+	////////////////////////
+};*/
+
+//=================================================== [ N A T I V E S ] ==========================================================
+
+/** 
+ * Registers a custom class module with Custom Class Maker.
+ *
+ * @param shortname		developer/programming name of module. i.e. "module"
+ * @param longname		official name of module. i.e. "The Module"
+ * @return			Array index number of module if registration is successful.
+ * @error			returns negative one (-1)
+ */
+native int CCM_RegisterClass(char shortname[16], char longname[32]);
+
+/** 
+ * Loads a custom class module's special files config file.
+ *
+ * @param charFile		path to the config file. example: CCM_LoadConfig("configs/ccm/module.cfg");
+ * @return			true if loading is successful, false otherwise.
+ */
+native bool CCM_LoadConfig(char[] charFile);
+
+/** 
+ * Hooks a typeset to a function
+ *
+ * @param type			type of function to hook
+ * @param callback		hook function to call when hook is called.
+ * @return			true if hooking is successful, false otherwise.
+ */
+native void CCM_Hook(CCMHookType type, CCMHookCB callback);
+native bool CCM_HookEx(CCMHookType type, CCMHookCB callback);
+
+/** 
+ * Unhooks a typeset from a function
+ *
+ * @param type			type of function to unhook
+ * @param callback		function to unhook.
+ * @return			true if unhooking is successful, false otherwise.
+ */
+native void CCM_Unhook(CCMHookType type, CCMHookCB callback);
+native bool CCM_UnhookEx(CCMHookType type, CCMHookCB callback);
+
+/** 
+ * Check if a player is a custom class
+ *
+ * @param client		index of a player
+ * @return			true if player is a custom class, false otherwise.
+ */
+native bool CCM_IsCustomClass(int client);
+
+/** 
+ * set a player to be a custom class or not
+ *
+ * @param client		index of a player
+ * @param state			set player as custom class or not
+ * @noreturn
+ */
+native void CCM_SetIsCustomClass(int client, bool state);
+
+/** 
+ * if a player is set to be a custom class or not
+ *
+ * @param client		index of a player
+ * @return			true if player is set to be a custom class, false otherwise.
+ */
+native bool CCM_IsSetCustomClass(int client);
+
+/** 
+ * set to set a player to be a custom class or not
+ *
+ * @param client		index of a player
+ * @param bstate		set player to be set as custom class or not
+ * @noreturn
+ */
+native void CCM_SetIsSetCustomClass(int client, bool bstate);
+
+/** 
+ * Gets the current index of the custom class module the player is using
+ *
+ * @param client		index of a player
+ * @return			abstract array index of module.
+ */
+native int CCM_GetPlayerModuleIndex(int client);
+
+/** 
+ * set to set a player to be a custom class or not
+ * @note: VERY DANGEROUS, USE WITH EXTREME CAUTION.
+ * @param client		index of a player
+ * @param index			integer to set the player's current class module index to
+ * @noreturn
+ */
+native void CCM_SetPlayerModuleIndex(int client, int index);
+
+methodmap CCMClass /* [ M E T H O D  M A P ] */
+{
+	/* [ C O N S T R U C T O R ] */
+
+	public CCMClass(int index)
+	{
+		if ( IsValidClient(index) ) {
+			return view_as<CCMClass>( GetClientUserId(index) );
+		}
+		return view_as<CCMClass>(-1);
+	}
+	///////////////////////////////
+
+	/* [ P R O P E R T I E S ] */
+
+	property int userid {
+		public get()				{ return view_as<int>(this); }
+	}
+	property int index {
+		public get()				{ return GetClientOfUserId( this.userid ); }
+	}
+	property bool bIsCustom
+	{
+		public get()				{ return CCM_IsCustomClass( this.index ); }
+		public set( bool val )			{ CCM_SetIsCustomClass(this.index, val); }
+	}
+	property bool bSetCustom
+	{
+		public get()				{ return CCM_IsSetCustomClass(this.index); }
+		public set( bool val )			{ CCM_SetIsSetCustomClass(this.index, val); }
+	}
+	property int iIndex
+	{
+		public get()				{ return CCM_GetPlayerModuleIndex(this.index); }
+		public set( int val )			{ CCM_SetPlayerModuleIndex(this.index, val); }
+	}
+	///////////////////////////////
+
+	/* [ M E T H O D S ] */
+
+	/*public int SpawnWeapon(char[] name, int index, int level, int qual, char[] att)
+	{
+		TF2Item hWep = new TF2Item(OVERRIDE_ALL|FORCE_GENERATION);
+		if ( !hWep )
+			return -1;
+
+		hWep.SetClassname(name);
+		hWep.iItemIndex = index;
+		hWep.iLevel = level;
+		hWep.iQuality = qual;
+
+		char atts[32][32];
+		int count = ExplodeString(att, " ; ", atts, 32, 32);
+		if (count > 0)
+		{
+			hWep.iNumAttribs = count/2;
+			int i2 = 0;
+			for (int i = 0; i < count; i += 2)
+			{
+				hWep.SetAttribute( i2, StringToInt(atts[i]), StringToFloat(atts[i+1]) );
+				i2++;
+			}
+		}
+		else
+			hWep.iNumAttribs = 0;
+
+		int entity = hWep.GiveNamedItem(this.index);
+		delete hWep;
+		EquipPlayerWeapon(this.index, entity);
+		return entity;
+	}*/
+	/////////////////////
+};
+
+//=================================================================================================================================
+
+
 
 //=================================================== [ S T O C K S ] =========================================================
 stock int SetWeaponAmmo(int weapon, int ammo)
@@ -99,7 +346,7 @@ public Action RemoveEnt(Handle timer, any entid)
 {
 	int ent = EntRefToEntIndex(entid);
 	if (ent > 0 && IsValidEntity(ent)) AcceptEntityInput(ent, "Kill");
-	return Action:0;
+	return Plugin_Continue;
 }
 stock int GetWeaponClip(int weapon)
 {
@@ -128,7 +375,7 @@ stock int FindEntityByClassname2(int startEnt, const char[] classname)
 stock int SpawnWeapon(int client, char[] name, int index, int level, int qual, char[] att)
 {
 	Handle hWeapon = TF2Items_CreateItem(OVERRIDE_ALL|FORCE_GENERATION);
-	if (hWeapon == INVALID_HANDLE) return -1;
+	if (hWeapon == null) return -1;
 	TF2Items_SetClassname(hWeapon, name);
 	TF2Items_SetItemIndex(hWeapon, index);
 	TF2Items_SetLevel(hWeapon, level);
@@ -199,39 +446,6 @@ stock void TF2_RemoveAllWeapons2(int client)
 		TF2_RemoveWeaponSlot2(client, i);
 	}
 }
-stock Handle RegisterClass(Handle pluginhndl, const char[] name, CCMError error)
-{
-	if (!ValidateName(name))
-	{
-		LogError("**** RegisterClass - Invalid Name For Class ****");
-		error = Error_InvalidName;
-		return INVALID_HANDLE;
-	}
-	if (FindClassBySubPlugin(pluginhndl) != INVALID_HANDLE)
-	{
-		LogError("**** RegisterClass - Class Already Registered ****");
-		error = Error_SubpluginAlreadyRegistered;
-		return INVALID_HANDLE;
-	}
-	if (FindClassName(name) != INVALID_HANDLE)
-	{
-		LogError("**** RegisterClass - Class Already Exists ****");
-		error = Error_AlreadyExists;
-		return INVALID_HANDLE;
-	}
-	// Create the trie to hold the data about the class
-	Handle ClassSubplug = CreateTrie();
-	SetTrieValue(ClassSubplug, "Subplugin", pluginhndl);
-	SetTrieString(ClassSubplug, "ClassName", name);
-
-	// Then push it to the global array and trie
-	// Don't forget to convert the string to lower cases!
-	PushArrayCell(hArrayClass, ClassSubplug);
-	SetTrieValueCaseInsensitive(hTrieClass, name, ClassSubplug);
-
-	error = Error_None;
-	return pluginhndl;
-}
 stock bool ValidateName(const char[] name)
 {
 	int length = strlen(name);
@@ -244,21 +458,20 @@ stock bool ValidateName(const char[] name)
 	// A name is, of course, only valid if it's 1 or more chars long, though longer is recommended
 	return (length > 0);
 }
-stock Handle FindClassBySubPlugin(Handle plugin)
+stock bool GetTrieValueCaseInsensitive(StringMap trie, const char[] key, any &value)
 {
-	int count = GetArraySize(hArrayClass);
-	for (int i = 0; i < count; i++)
-	{
-		Handle classplugin = GetArrayCell(hArrayClass, i);
-		if (GetClassSubPlugin(classplugin) == plugin) return classplugin;
-	}
-	return INVALID_HANDLE;
+	if (trie == null) return false;
+	int length = strlen(key)+1;
+	char[] trieKey = new char[length];
+	StringToLower(key, trieKey, length);
+	return trie.GetValue(trieKey, value); //GetTrieValue(trie, trieKey, value);
 }
-stock Handle FindClassName(const char[] name)
+stock bool SetTrieValueCaseInsensitive(StringMap trie, const char[] key, any value)
 {
-	Handle GotClassName;
-	if (GetTrieValueCaseInsensitive(hTrieClass, name, GotClassName)) return GotClassName;
-	return INVALID_HANDLE;
+	int length = strlen(key)+1;
+	char[] trieKey = new char[length];
+	StringToLower(key, trieKey, length);
+	return trie.SetValue(trieKey, value); //SetTrieValue(trie, trieKey, value);
 }
 stock void StringToLower(const char[] input, char[] output, int size)
 {
@@ -268,30 +481,73 @@ stock void StringToLower(const char[] input, char[] output, int size)
 		else output[i] = input[i];
 	}
 }
-stock bool GetTrieValueCaseInsensitive(Handle trie, const char[] key, any &value)
-{
-	int length = strlen(key)+1;
-	char[] trieKey = new char[length]; //you've got to be fucking me.
-	StringToLower(key, trieKey, length);
-	return GetTrieValue(trie, trieKey, value);
-}
-stock bool SetTrieValueCaseInsensitive(Handle trie, const char[] key, any value)
-{
-	int length = strlen(key)+1;
-	char[] trieKey = new char[length];
-	StringToLower(key, trieKey, length);
-	return SetTrieValue(trie, trieKey, value);
-}
-stock Handle GetClassSubPlugin(Handle hndl)
+stock Handle GetClassSubPlugin(StringMap hndl)
 {
 	Handle plugin;
-	if (GetTrieValue(hndl, "Subplugin", plugin)) return plugin;
+	if ( hndl.GetValue("Subplugin", plugin) ) return plugin;
 	// Shouldn't actually get here, but we keep it just incase
-	return INVALID_HANDLE;
+	return null;
+}
+stock int FilterSentence(char[] message,bool extremefilter=false,bool RemoveWhiteSpace=false)
+{
+	int charMax = strlen(message)+1;
+	int charIndex;
+	int copyPos = 0;
+
+	char[] strippedString = new char[charMax];
+
+	for (charIndex = 0; charIndex < charMax; charIndex++)
+	{
+		// Reach end of string. Break.
+		if (message[copyPos] == 0) {
+			strippedString[copyPos] = 0;
+			break;
+		}
+
+		if (GetCharBytes(message[charIndex])>1)
+		{
+			continue;
+		}
+
+		if(RemoveWhiteSpace && IsCharSpace(message[charIndex]))
+		{
+			continue;
+		}
+
+		if(extremefilter && IsAlphaNumeric(message[charIndex]))
+		{
+			strippedString[copyPos] = message[charIndex];
+			copyPos++;
+			continue;
+		}
+
+		// Found a normal character. Copy.
+		if (!extremefilter && IsNormalCharacter(message[charIndex])) {
+			strippedString[copyPos] = message[charIndex];
+			copyPos++;
+			continue;
+		}
+	}
+
+	// Copy back to passing parameter.
+	strcopy(message, charMax, strippedString);
+	return copyPos;
+}
+stock bool IsAlphaNumeric(int characterNum) {
+	return ((characterNum >= 48 && characterNum <=57)
+		||  (characterNum >= 65 && characterNum <=90)
+		||  (characterNum >= 97 && characterNum <=122));
+}
+stock bool IsNormalCharacter(int characterNum) {
+	return (characterNum > 31 && characterNum < 127);
+}
+stock bool IsUnicode(int characterNum)
+{
+	return ( characterNum >= 128 );
 }
 //=================================================================================================================================
 
-public SharedPlugin:__pl_CCM = 
+public SharedPlugin __pl_CCM = 
 {
 	name = "ccm",
 	file = "ccm.smx",
@@ -306,5 +562,17 @@ public SharedPlugin:__pl_CCM =
 public __pl_CCM_SetNTVOptional()
 {
 	MarkNativeAsOptional("CCM_RegisterClass");
+	MarkNativeAsOptional("CCM_LoadConfig");
+	MarkNativeAsOptional("CCM_Hook");
+	MarkNativeAsOptional("CCM_HookEx");
+	MarkNativeAsOptional("CCM_Unhook");
+	MarkNativeAsOptional("CCM_UnhookEx");
+
+	MarkNativeAsOptional("CCM_IsCustomClass");
+	MarkNativeAsOptional("CCM_SetIsCustomClass");
+	MarkNativeAsOptional("CCM_IsSetCustomClass");
+	MarkNativeAsOptional("CCM_SetIsSetCustomClass");
+	MarkNativeAsOptional("CCM_GetPlayerModuleIndex");
+	MarkNativeAsOptional("CCM_SetPlayerModuleIndex");
 }
 #endif
