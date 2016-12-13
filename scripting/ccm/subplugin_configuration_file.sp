@@ -4,8 +4,7 @@ public bool CCM_Load_Configuration(Handle plugin, char[] cFile)
 	bool found = false;
 	KeyValues kv = PrePareTheFile(cFile);
 
-	if (kv != null)
-	{
+	if (kv != null) {
 		found = LoadConfigurationValues(cFile, kv, plugin);
 		delete (kv);
 		return found;
@@ -22,11 +21,10 @@ public KeyValues PrePareTheFile(char[] cfile)
 
 	/* Return true if an update was available. */
 	// "TF2_SB_WEAPONS" = cName
-	KeyValues kv = new KeyValues("CCM_CONFIGURATION");//CreateKeyValues("CCM_CONFIGURATION");
+	KeyValues kv = new KeyValues("CCM_CONFIGURATION"); //CreateKeyValues("CCM_CONFIGURATION");
 
 	//if (!FileToKeyValues(kv, path))
-	if ( !kv.ExportToFile(path) )
-	{
+	if ( !kv.ExportToFile(path) ) {
 		delete (kv);
 		return null;
 	}
@@ -49,15 +47,13 @@ public bool LoadConfigurationValues(char[] cFile, KeyValues kv, Handle plugin)
 	bool bPreCacheFile = false;
 	bool bAddFileToDownloadsTable = false;
 
-	do
-	{
+	do {
 		// You can read the section/key name by using KvGetSectionName here.
 		//PrintToChatAll("do loop\n");
 
 		if (kv.GotoFirstSubKey(false)) //if (KvGotoFirstSubKey(kv, false))
 		{
-			do
-			{
+			do {
 				//if(KvGetSectionName(kv, sSectionBuffer, sizeof(sSectionBuffer)))
 				if ( kv.GetSectionName(sSectionBuffer, sizeof(sSectionBuffer)) )
 				{
@@ -87,8 +83,7 @@ public bool LoadConfigurationValues(char[] cFile, KeyValues kv, Handle plugin)
 					if (kv.GotoFirstSubKey(false)) //if (KvGotoFirstSubKey(kv, false))
 					{
 						// Current key is a section. Browse it recursively.
-						do
-						{
+						do {
 							//if(KvGetSectionName(kv, sSubKeyBuffer, sizeof(sSubKeyBuffer)))
 							if ( kv.GetSectionName(sSubKeyBuffer, sizeof(sSubKeyBuffer)) )
 							{
